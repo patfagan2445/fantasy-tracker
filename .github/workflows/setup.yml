@@ -1,0 +1,402 @@
+name: Setup Project Structure
+on:
+  push:
+    paths:
+      - '.github/workflows/setup.yml'
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Create project files
+        run: |
+          mkdir -p backend/src/routes
+          mkdir -p frontend/src/hooks
+          mkdir -p frontend/src/utils
+          mkdir -p frontend/public
+
+          cat > backend/package.json << 'ENDOFFILE'
+          {
+            "name": "fantasy-tracker-backend",
+            "version": "1.0.0",
+            "main": "src/server.js",
+            "scripts": {
+              "start": "node src/server.js",
+              "dev": "nodemon src/server.js"
+            },
+            "dependencies": {
+              "axios": "^1.6.0",
+              "cors": "^2.8.5",
+              "dotenv": "^16.3.1",
+              "express": "^4.18.2",
+              "node-cache": "^5.1.2",
+              "web-push": "^3.6.7"
+            },
+            "devDependencies": {
+              "nodemon": "^3.0.2"
+            }
+          }
+          ENDOFFILE
+
+          cat > backend/railway.toml << 'ENDOFFILE'
+          [build]
+          builder = "nixpacks"
+
+          [deploy]
+          startCommand = "npm start"
+          healthcheckPath = "/api/health"
+          healthcheckTimeout = 30
+          restartPolicyType = "on_failure"
+          ENDOFFILE
+
+          cat > backend/src/server.js << 'ENDOFFILE'
+          require('dotenv').config();
+          const express = require('express');
+          const cors = require('cors');
+          const NodeCache = require('node-cache');
+          const espnRouter = require('./routes/espn');
+          const yahooRouter = require('./routes/yahoo');
+          const fantraxRouter = require('./routes/fantrax');
+          const mlbRouter = require('./routes/mlb');
+          const notifyRouter = require('./routes/notify');
+          const app = express();
+          const PORT = process.env.PORT || 3001;
+          const rosterCache = new NodeCache({ stdTTL: 300 });
+          const gameCache = new NodeCache({ stdTTL: 30 });
+          app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
+          app.use(express.json());
+          app.use((req, res, next) => {
+            req.rosterCache = rosterCache;
+            req.gameCache = gameCache;
+            next();
+          });
+          app.use('/api/espn', espnRouter);
+          app.use('/api/yahoo', yahooRouter);
+          app.use('/api/fantrax', fantraxRouter);
+          app.use('/api/mlb', mlbRouter);
+          app.use('/api/notify', notifyRouter);
+          app.get('/api/health', (req, res) => {
+            res.json({ status: 'ok', timestamp: new Date().toISOString() });
+          });
+          app.listen(PORT, () => {
+            console.log('Fantasy Tracker backend running on port ' + PORT);
+          });
+          module.exports = app;
+          ENDOFFILE
+
+          cat > backend/src/routes/espn.js << 'ENDOFFILE'
+          const express = require('express');
+          const axios = require('axios');
+          const router = express.Router();
+          router.get('/roster', async (req, res) => {
+            const { leagueId, seasonId = new Date().getFullYear() } = req.query;
+            const { espn_s2, swid } = req.headers;
+            if (!espn_s2 || !swid) return res.status(401).json({ error: 'Missing ESPN credentials' });
+            if (!leagueId) return res.status(400).json({ error: 'leagueId required' });
+            try {
+              const url = 'https://fantasy.espn.com/apis/v3/games/flb/seasons/' + seasonId + '/segments/0/leagues/' + leagueId;
+              const response = await axios.get(url, {
+                params: { view: 'mRoster' },
+                headers: { Cookie: 'espn_s2=' + espn_s2 + '; SWID=' + swid, 'User-Agent': 'Mozilla/5.0' }
+              });
+              const myTeam = response.data.teams?.find(t => t.roster?.entries?.length > 0);
+              if (!myTeam) return res.status(404).json({ error: 'Team not found' });
+              const MLB_TEAM_MAP = {1:'BAL',2:'BOS',3:'LAA',4:'CWS',5:'CLE',6:'DET',7:'KC',8:'MIL',9:'MIN',10:'NYY',11:'OAK',12:'SEA',13:'TEX',14:'TOR',15:'ATL',16:'CHC',17:'CIN',18:'HOU',19:'LAD',20:'WSH',21:'NYM',22:'PHI',23:'PIT',24:'STL',25:'SD',26:'SF',27:'COL',28:'MIA',29:'ARI',30:'TB'};
+              const POSITION_MAP = {0:'C',1:'1B',2:'2B',3:'3B',4:'SS',5:'OF',6:'OF',7:'OF',8:'DH',9:'P',10:'P',11:'P',12:'P',13:'P',14:'BN',15:'IL'};
+              const players = myTeam.roster.entries.map(entry => ({
+                id: entry.playerPoolEntry?.player?.id,
+                name: entry.playerPoolEntry?.player?.fullName,
+                team: MLB_TEAM_MAP[entry.playerPoolEntry?.player?.proTeamId] || 'UNK',
+                pos: POSITION_MAP[entry.lineupSlotId] || 'BN',
+                source: 'ESPN'
+              })).filter(p => p.name && p.pos !== 'BN' && p.pos !== 'IL');
+              res.json({ players });
+            } catch (err) {
+              res.status(500).json({ error: 'ESPN API error', detail: err.message });
+            }
+          });
+          module.exports = router;
+          ENDOFFILE
+
+          cat > backend/src/routes/yahoo.js << 'ENDOFFILE'
+          const express = require('express');
+          const axios = require('axios');
+          const router = express.Router();
+          const YAHOO_TOKEN_URL = 'https://api.login.yahoo.com/oauth2/get_token';
+          const YAHOO_API_BASE = 'https://fantasysports.yahooapis.com/fantasy/v2';
+          router.get('/auth', (req, res) => {
+            const { YAHOO_CLIENT_ID, YAHOO_REDIRECT_URI } = process.env;
+            if (!YAHOO_CLIENT_ID) return res.status(500).json({ error: 'YAHOO_CLIENT_ID not set' });
+            const params = new URLSearchParams({ client_id: YAHOO_CLIENT_ID, redirect_uri: YAHOO_REDIRECT_URI, response_type: 'code', scope: 'fspt-r' });
+            res.redirect('https://api.login.yahoo.com/oauth2/request_auth?' + params);
+          });
+          router.get('/callback', async (req, res) => {
+            const { code } = req.query;
+            const { YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REDIRECT_URI } = process.env;
+            try {
+              const response = await axios.post(YAHOO_TOKEN_URL, new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: YAHOO_REDIRECT_URI }), { auth: { username: YAHOO_CLIENT_ID, password: YAHOO_CLIENT_SECRET }, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+              const { access_token, refresh_token } = response.data;
+              res.redirect((process.env.FRONTEND_URL || 'http://localhost:3000') + '/auth/yahoo/success?token=' + access_token + '&refresh=' + refresh_token);
+            } catch (err) {
+              res.status(500).json({ error: 'Yahoo OAuth failed', detail: err.message });
+            }
+          });
+          router.post('/refresh', async (req, res) => {
+            const { refreshToken } = req.body;
+            const { YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET } = process.env;
+            try {
+              const response = await axios.post(YAHOO_TOKEN_URL, new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }), { auth: { username: YAHOO_CLIENT_ID, password: YAHOO_CLIENT_SECRET }, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+              res.json({ accessToken: response.data.access_token });
+            } catch (err) {
+              res.status(401).json({ error: 'Token refresh failed' });
+            }
+          });
+          router.get('/roster', async (req, res) => {
+            const { teamKey } = req.query;
+            const token = req.headers.authorization?.replace('Bearer ', '');
+            if (!token) return res.status(401).json({ error: 'Missing Yahoo token' });
+            if (!teamKey) return res.status(400).json({ error: 'teamKey required' });
+            try {
+              const response = await axios.get(YAHOO_API_BASE + '/team/' + teamKey + '/roster/players', { params: { format: 'json' }, headers: { Authorization: 'Bearer ' + token } });
+              const rosterData = response.data.fantasy_content?.team?.[1]?.roster?.['0']?.players;
+              const players = [];
+              if (rosterData) {
+                for (let i = 0; i < rosterData.count; i++) {
+                  const p = rosterData[i]?.player;
+                  if (!p) continue;
+                  const info = p[0];
+                  const name = info?.find(x => x?.name)?.name;
+                  const pos = info?.find(x => x?.selected_position)?.[1]?.position;
+                  const teamAbbr = info?.find(x => x?.editorial_team_abbr)?.editorial_team_abbr?.toUpperCase();
+                  if (name && pos && pos !== 'BN' && pos !== 'IL') players.push({ name: name.full, team: teamAbbr, pos, source: 'Yahoo' });
+                }
+              }
+              res.json({ players });
+            } catch (err) {
+              res.status(500).json({ error: 'Yahoo API error', detail: err.message });
+            }
+          });
+          module.exports = router;
+          ENDOFFILE
+
+          cat > backend/src/routes/fantrax.js << 'ENDOFFILE'
+          const express = require('express');
+          const axios = require('axios');
+          const router = express.Router();
+          router.get('/roster', async (req, res) => {
+            const { leagueId } = req.query;
+            const sessionCookie = req.headers['fantrax-session'];
+            if (!sessionCookie) return res.status(401).json({ error: 'Missing Fantrax session cookie' });
+            if (!leagueId) return res.status(400).json({ error: 'leagueId required' });
+            try {
+              const response = await axios.post('https://www.fantrax.com/fxpa/req', { msgs: [{ method: 'getTeamRosterInfo', data: { leagueId, period: 'CURRENT' } }] }, { headers: { 'Content-Type': 'application/json', 'Cookie': 'fantrax.session=' + sessionCookie, 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.fantrax.com' } });
+              const rosterData = response.data?.responses?.[0]?.data;
+              if (!rosterData) return res.status(404).json({ error: 'No roster data' });
+              const players = [];
+              const rows = rosterData.tableList?.[0]?.rows || [];
+              rows.forEach(row => {
+                const name = row.columns?.find(c => c.columnType === 'PLAYER')?.playerInfo?.fullName;
+                const team = row.columns?.find(c => c.columnType === 'TEAM')?.content;
+                const pos = row.columns?.find(c => c.columnType === 'POSITION')?.content;
+                const slot = row.columns?.find(c => c.columnType === 'ROSTER_STATUS')?.content;
+                if (name && slot !== 'BN' && slot !== 'IL') players.push({ name, team, pos, source: 'Fantrax' });
+              });
+              res.json({ players });
+            } catch (err) {
+              res.status(500).json({ error: 'Fantrax API error', detail: err.message });
+            }
+          });
+          module.exports = router;
+          ENDOFFILE
+
+          cat > backend/src/routes/mlb.js << 'ENDOFFILE'
+          const express = require('express');
+          const axios = require('axios');
+          const router = express.Router();
+          const MLB_API = 'https://statsapi.mlb.com/api/v1';
+          router.get('/schedule', async (req, res) => {
+            const cache = req.gameCache;
+            const cached = cache.get('mlb_schedule');
+            if (cached) return res.json(cached);
+            try {
+              const today = new Date().toISOString().split('T')[0];
+              const response = await axios.get(MLB_API + '/schedule', { params: { sportId: 1, date: today, hydrate: 'linescore,probablePitcher,team' } });
+              const games = response.data.dates?.[0]?.games || [];
+              const simplified = games.map(g => ({ gamePk: g.gamePk, status: g.status?.detailedState, abstractState: g.status?.abstractGameState, homeTeam: g.teams?.home?.team?.abbreviation, awayTeam: g.teams?.away?.team?.abbreviation, homeScore: g.teams?.home?.score, awayScore: g.teams?.away?.score, inning: g.linescore?.currentInning, inningOrdinal: g.linescore?.currentInningOrdinal, inningState: g.linescore?.inningState, isLive: g.status?.abstractGameState === 'Live', isFinal: g.status?.abstractGameState === 'Final' }));
+              cache.set('mlb_schedule', simplified);
+              res.json(simplified);
+            } catch (err) {
+              res.status(500).json({ error: 'MLB schedule fetch failed', detail: err.message });
+            }
+          });
+          router.post('/check-roster', async (req, res) => {
+            const { players } = req.body;
+            if (!players?.length) return res.json({ active: [] });
+            try {
+              const today = new Date().toISOString().split('T')[0];
+              const schedResponse = await axios.get(MLB_API + '/schedule', { params: { sportId: 1, date: today } });
+              const games = schedResponse.data.dates?.[0]?.games || [];
+              const liveGames = games.filter(g => g.status?.abstractGameState === 'Live');
+              const active = [];
+              await Promise.all(liveGames.map(async game => {
+                try {
+                  const liveRes = await axios.get('https://statsapi.mlb.com/api/v1.1/game/' + game.gamePk + '/feed/live');
+                  const matchup = liveRes.data.liveData?.plays?.currentPlay?.matchup;
+                  const linescore = liveRes.data.liveData?.linescore;
+                  const gameData = liveRes.data.gameData;
+                  if (!matchup) return;
+                  const currentBatterName = matchup.batter?.fullName;
+                  const currentPitcherName = matchup.pitcher?.fullName;
+                  players.forEach(player => {
+                    const lastName = player.name.split(' ').slice(-1)[0].toLowerCase();
+                    if (currentBatterName?.toLowerCase().includes(lastName)) active.push({ player, situation: 'batting', gamePk: game.gamePk, inning: linescore?.currentInningOrdinal, inningState: linescore?.inningState, score: gameData?.teams?.away?.abbreviation + ' ' + linescore?.teams?.away?.runs + ' - ' + gameData?.teams?.home?.abbreviation + ' ' + linescore?.teams?.home?.runs, count: linescore?.balls + '-' + linescore?.strikes + ', ' + linescore?.outs + ' out' });
+                    if (currentPitcherName?.toLowerCase().includes(lastName)) active.push({ player, situation: 'pitching', gamePk: game.gamePk, inning: linescore?.currentInningOrdinal, inningState: linescore?.inningState, score: gameData?.teams?.away?.abbreviation + ' ' + linescore?.teams?.away?.runs + ' - ' + gameData?.teams?.home?.abbreviation + ' ' + linescore?.teams?.home?.runs, count: linescore?.balls + '-' + linescore?.strikes + ', ' + linescore?.outs + ' out' });
+                  });
+                } catch (e) {}
+              }));
+              res.json({ active, checkedGames: liveGames.length, timestamp: new Date().toISOString() });
+            } catch (err) {
+              res.status(500).json({ error: 'Roster check failed', detail: err.message });
+            }
+          });
+          module.exports = router;
+          ENDOFFILE
+
+          cat > backend/src/routes/notify.js << 'ENDOFFILE'
+          const express = require('express');
+          const webpush = require('web-push');
+          const router = express.Router();
+          const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+          const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+          if (vapidPublicKey && vapidPrivateKey) webpush.setVapidDetails('mailto:' + (process.env.VAPID_EMAIL || 'admin@example.com'), vapidPublicKey, vapidPrivateKey);
+          const subscriptions = new Map();
+          router.get('/vapid-public-key', (req, res) => {
+            if (!vapidPublicKey) return res.status(500).json({ error: 'VAPID keys not configured' });
+            res.json({ publicKey: vapidPublicKey });
+          });
+          router.post('/subscribe', (req, res) => {
+            const { subscription, userId = 'default' } = req.body;
+            if (!subscription) return res.status(400).json({ error: 'subscription required' });
+            subscriptions.set(userId, subscription);
+            res.json({ success: true });
+          });
+          router.post('/send', async (req, res) => {
+            const { userId = 'default', title, body, gamePk, playerName } = req.body;
+            const subscription = subscriptions.get(userId);
+            if (!subscription) return res.status(404).json({ error: 'No subscription found' });
+            const payload = JSON.stringify({ title: title || '⚾ ' + playerName + ' is up!', body: body || 'Tap to watch on MLB.tv', icon: '/icons/icon-192.png', data: { gamePk, url: 'https://www.mlb.com/live-stream-games/' + gamePk }, actions: [{ action: 'watch', title: '▶ Watch on MLB.tv' }] });
+            try {
+              await webpush.sendNotification(subscription, payload);
+              res.json({ success: true });
+            } catch (err) {
+              if (err.statusCode === 410) { subscriptions.delete(userId); return res.status(410).json({ error: 'Subscription expired' }); }
+              res.status(500).json({ error: 'Push failed', detail: err.message });
+            }
+          });
+          module.exports = router;
+          ENDOFFILE
+
+          cat > frontend/package.json << 'ENDOFFILE'
+          {
+            "name": "fantasy-tracker-frontend",
+            "version": "1.0.0",
+            "private": true,
+            "dependencies": {
+              "react": "^18.2.0",
+              "react-dom": "^18.2.0",
+              "react-scripts": "5.0.1"
+            },
+            "scripts": {
+              "start": "react-scripts start",
+              "build": "react-scripts build",
+              "test": "react-scripts test"
+            },
+            "browserslist": {
+              "production": [">0.2%", "not dead", "not op_mini all"],
+              "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+            },
+            "proxy": "http://localhost:3001"
+          }
+          ENDOFFILE
+
+          cat > frontend/vercel.json << 'ENDOFFILE'
+          {
+            "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+            "headers": [{ "source": "/service-worker.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }]
+          }
+          ENDOFFILE
+
+          cat > frontend/public/index.html << 'ENDOFFILE'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+            <meta name="theme-color" content="#1a5c3a" />
+            <meta name="apple-mobile-web-app-capable" content="yes" />
+            <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+            <title>Fantasy Live Tracker</title>
+            <style>* { margin: 0; padding: 0; box-sizing: border-box; } body { background: #1a5c3a; } #root { min-height: 100vh; }</style>
+          </head>
+          <body>
+            <noscript>You need to enable JavaScript to run this app.</noscript>
+            <div id="root"></div>
+          </body>
+          </html>
+          ENDOFFILE
+
+          cat > frontend/public/manifest.json << 'ENDOFFILE'
+          {
+            "name": "Fantasy Live Tracker",
+            "short_name": "FantasyLive",
+            "description": "Real-time fantasy baseball roster tracker",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#1a5c3a",
+            "theme_color": "#1a5c3a",
+            "icons": [
+              { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+              { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+            ]
+          }
+          ENDOFFILE
+
+          cat > frontend/public/service-worker.js << 'ENDOFFILE'
+          const CACHE_NAME = 'fantasy-tracker-v1';
+          self.addEventListener('install', event => { self.skipWaiting(); });
+          self.addEventListener('activate', event => { self.clients.claim(); });
+          self.addEventListener('fetch', event => {
+            if (event.request.method !== 'GET') return;
+            event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request)));
+          });
+          self.addEventListener('push', event => {
+            if (!event.data) return;
+            let data;
+            try { data = JSON.parse(event.data.text()); } catch { data = { title: '⚾ Player Alert', body: event.data.text() }; }
+            event.waitUntil(self.registration.showNotification(data.title, { body: data.body, icon: '/icons/icon-192.png', data: data.data || {}, actions: [{ action: 'watch', title: '▶ Watch on MLB.tv' }], requireInteraction: true, vibrate: [200, 100, 200] }));
+          });
+          self.addEventListener('notificationclick', event => {
+            event.notification.close();
+            if (event.action === 'dismiss') return;
+            const url = event.notification.data?.gamePk ? 'https://www.mlb.com/live-stream-games/' + event.notification.data.gamePk : 'https://www.mlb.com/tv';
+            event.waitUntil(clients.openWindow(url));
+          });
+          ENDOFFILE
+
+          cat > frontend/src/index.js << 'ENDOFFILE'
+          import React from 'react';
+          import ReactDOM from 'react-dom/client';
+          import App from './App';
+          const root = ReactDOM.createRoot(document.getElementById('root'));
+          root.render(<React.StrictMode><App /></React.StrictMode>);
+          ENDOFFILE
+
+          echo "All files created successfully"
+
+      - name: Commit files
+        run: |
+          git config user.email "setup@fantasy-tracker.app"
+          git config user.name "Setup Bot"
+          git add .
+          git commit -m "Add all project files via setup action" || echo "Nothing to commit"
+          git push
