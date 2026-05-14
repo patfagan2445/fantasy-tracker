@@ -2,8 +2,33 @@ const express = require('express');
 const axios = require('axios');
 const router = express.Router();
 
+router.get('/debug', async (req, res) => {
+  const { leagueId, seasonId = '2026' } = req.query;
+  const { espn_s2, swid } = req.headers;
+
+  try {
+    const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${seasonId}/segments/0/leagues/${leagueId}`;
+    const response = await axios.get(url, {
+      params: { view: 'mRoster' },
+      headers: {
+        Cookie: `espn_s2=${encodeURIComponent(espn_s2)}; SWID=${swid}`,
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json',
+        'Referer': 'https://fantasy.espn.com'
+      }
+    });
+    res.json({
+      teamCount: response.data.teams?.length,
+      teamIds: response.data.teams?.map(t => ({ id: t.id, name: t.location + ' ' + t.nickname, rosterEntries: t.roster?.entries?.length })),
+      status: response.status
+    });
+  } catch (err) {
+    res.json({ error: err.message, status: err.response?.status, data: err.response?.data });
+  }
+});
+
 router.get('/roster', async (req, res) => {
-  const { leagueId, seasonId = new Date().getFullYear(), teamId } = req.query;
+  const { leagueId, seasonId = '2026', teamId } = req.query;
   const { espn_s2, swid } = req.headers;
 
   if (!espn_s2 || !swid) {
@@ -40,7 +65,7 @@ router.get('/roster', async (req, res) => {
       myTeam = data.teams.find(t => t.roster?.entries?.length > 0);
     }
     if (!myTeam) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Team not found',
         detail: `Available team IDs: ${data.teams.map(t => t.id).join(', ')}`
       });
@@ -66,8 +91,8 @@ router.get('/roster', async (req, res) => {
       source: 'ESPN'
     })).filter(p => p.name && p.pos !== 'BN' && p.pos !== 'IL');
 
-    res.json({ 
-      players, 
+    res.json({
+      players,
       teamName: myTeam.location + ' ' + myTeam.nickname,
       teamId: myTeam.id
     });
