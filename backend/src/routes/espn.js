@@ -2,37 +2,15 @@ const express = require('express');
 const axios = require('axios');
 const router = express.Router();
 
-router.get('/debug', async (req, res) => {
-  const { leagueId, seasonId = '2026' } = req.query;
-  const { espn_s2, swid } = req.headers;
-
-  try {
-    const url = `https://fantasy.espn.com/apis/v3/games/flb/seasons/${seasonId}/segments/0/leagues/${leagueId}`;
-    const response = await axios.get(url, {
-      params: { view: 'mRoster' },
-      headers: {
-        Cookie: `espn_s2=${encodeURIComponent(espn_s2)}; SWID=${swid}`,
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json',
-        'Referer': 'https://fantasy.espn.com'
-      }
-    });
-    res.json({
-      teamCount: response.data.teams?.length,
-      teamIds: response.data.teams?.map(t => ({ id: t.id, name: t.location + ' ' + t.nickname, rosterEntries: t.roster?.entries?.length })),
-      status: response.status
-    });
-  } catch (err) {
-    res.json({ error: err.message, status: err.response?.status, data: err.response?.data });
-  }
-});
-
 router.get('/roster', async (req, res) => {
-  const { leagueId, seasonId = '2026', teamId } = req.query;
-  const { espn_s2, swid } = req.headers;
+  const leagueId = req.query.leagueId || process.env.ESPN_LEAGUE_ID;
+  const teamId = req.query.teamId || process.env.ESPN_TEAM_ID;
+  const seasonId = req.query.seasonId || '2026';
+  const espn_s2 = process.env.ESPN_S2;
+  const swid = process.env.ESPN_SWID;
 
   if (!espn_s2 || !swid) {
-    return res.status(401).json({ error: 'Missing ESPN credentials' });
+    return res.status(401).json({ error: 'Missing ESPN credentials in environment variables' });
   }
 
   if (!leagueId) {
@@ -44,23 +22,25 @@ router.get('/roster', async (req, res) => {
     const response = await axios.get(url, {
       params: { view: 'mRoster' },
       headers: {
-        Cookie: `espn_s2=${encodeURIComponent(espn_s2)}; SWID=${swid}`,
+        Cookie: `espn_s2=${espn_s2}; SWID=${swid}`,
         'User-Agent': 'Mozilla/5.0',
         'Accept': 'application/json',
-        'Referer': 'https://fantasy.espn.com'
+        'Referer': 'https://fantasy.espn.com',
+        'X-Fantasy-Source': 'kona',
+        'X-Fantasy-Platform': 'kona-PROD-m117f6986ef04e379a9cfa50041b29dce5a1dc06'
       }
     });
 
     const data = response.data;
 
     if (!data.teams || data.teams.length === 0) {
-      return res.status(404).json({ error: 'No teams found in league', detail: 'Check leagueId and cookies' });
+      return res.status(404).json({ 
+        error: 'No teams found',
+        detail: 'ESPN returned empty response — cookies may be expired'
+      });
     }
 
-    let myTeam;
-    if (teamId) {
-      myTeam = data.teams.find(t => t.id === Number(teamId));
-    }
+    let myTeam = data.teams.find(t => t.id === Number(teamId));
     if (!myTeam) {
       myTeam = data.teams.find(t => t.roster?.entries?.length > 0);
     }
@@ -100,9 +80,9 @@ router.get('/roster', async (req, res) => {
   } catch (err) {
     const status = err.response?.status;
     const detail = err.response?.data || err.message;
-    console.error('ESPN error:', status, detail);
-    if (status === 401) return res.status(401).json({ error: 'ESPN auth failed — cookies may be expired', detail });
-    if (status === 404) return res.status(404).json({ error: 'League not found — check leagueId', detail });
+    console.error('ESPN error:', status, JSON.stringify(detail));
+    if (status === 401) return res.status(401).json({ error: 'ESPN auth failed', detail });
+    if (status === 404) return res.status(404).json({ error: 'League not found', detail });
     res.status(500).json({ error: 'ESPN API error', detail, status });
   }
 });
