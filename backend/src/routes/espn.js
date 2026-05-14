@@ -19,7 +19,7 @@ router.get('/roster', async (req, res) => {
     const response = await axios.get(url, {
       params: { view: 'mRoster' },
       headers: {
-        Cookie: `espn_s2=${espn_s2}; SWID=${swid}`,
+        Cookie: `espn_s2=${encodeURIComponent(espn_s2)}; SWID=${swid}`,
         'User-Agent': 'Mozilla/5.0',
         'Accept': 'application/json',
         'Referer': 'https://fantasy.espn.com'
