@@ -37,8 +37,8 @@ const call = async (path, options = {}) => {
   return res.json();
 };
 
-export const fetchESPNRoster = (leagueId) =>
-  call(`/api/espn/roster?leagueId=${leagueId}`, { headers: authHeaders('ESPN') });
+export const fetchESPNRoster = (leagueId, teamId) =>
+  call(`/api/espn/roster?leagueId=${leagueId}&teamId=${teamId}`, { headers: authHeaders('ESPN') });
 
 export const fetchYahooRoster = (teamKey) =>
   call(`/api/yahoo/roster?teamKey=${teamKey}`, { headers: authHeaders('Yahoo') });
@@ -51,7 +51,7 @@ export const fetchCombinedRoster = async (leagues) => {
 
   if (leagues.ESPN) {
     try {
-      const d = await fetchESPNRoster(leagues.ESPN);
+      const d = await fetchESPNRoster(leagues.ESPN, leagues.ESPNTeamId || '4');
       results.players.push(...d.players);
     } catch (e) { results.errors.push({ platform: 'ESPN', error: e.message }); }
   }
