@@ -41,9 +41,7 @@ function AlertBanner({ alert, onDismiss }) {
 function RosterTab({ players, activePlayers, loading }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
-
   const activeMap = Object.fromEntries(activePlayers.map(a => [a.player.name, a]));
-
   const filtered = players.filter(p => {
     const matchSearch = !search || p.name.toLowerCase().includes(search.toLowerCase())
       || p.team.toLowerCase().includes(search.toLowerCase());
@@ -52,7 +50,6 @@ function RosterTab({ players, activePlayers, loading }) {
       || filter === p.source;
     return matchSearch && matchFilter;
   });
-
   return (
     <div>
       <div className="stats-row">
@@ -70,6 +67,7 @@ function RosterTab({ players, activePlayers, loading }) {
           <option value="ESPN">ESPN</option>
           <option value="Yahoo">Yahoo</option>
           <option value="Fantrax">Fantrax</option>
+          <option value="Manual">Manual</option>
         </select>
       </div>
       {loading ? (
@@ -153,13 +151,16 @@ function LiveTab({ activePlayers }) {
   );
 }
 
-function PlatformsTab({ config, onSave }) {
+function PlatformsTab({ config, onSave, players, onAddPlayer, onRemovePlayer }) {
   const [espnS2, setEspnS2] = useState(config.ESPN?.s2 || '');
   const [espnSwid, setEspnSwid] = useState(config.ESPN?.swid || '');
   const [espnLeague, setEspnLeague] = useState(config.leagues?.ESPN || '');
   const [yahooTeam, setYahooTeam] = useState(config.leagues?.Yahoo || '');
   const [fantraxSession, setFantraxSession] = useState(config.Fantrax?.session || '');
   const [fantraxLeague, setFantraxLeague] = useState(config.leagues?.Fantrax || '');
+  const [manualName, setManualName] = useState('');
+  const [manualTeam, setManualTeam] = useState('');
+  const [manualPos, setManualPos] = useState('OF');
 
   const handleSave = () => {
     if (espnS2 && espnSwid) saveCreds('ESPN', { s2: espnS2, swid: espnSwid });
@@ -167,8 +168,69 @@ function PlatformsTab({ config, onSave }) {
     onSave({ leagues: { ESPN: espnLeague, Yahoo: yahooTeam, Fantrax: fantraxLeague } });
   };
 
+  const handleAddPlayer = () => {
+    if (!manualName || !manualTeam) return;
+    onAddPlayer({ name: manualName, team: manualTeam.toUpperCase(), pos: manualPos, source: 'Manual' });
+    setManualName('');
+    setManualTeam('');
+  };
+
   return (
     <div>
+      <div className="platform-section">
+        <div className="platform-header" style={{ background: '#f0f5e8' }}>
+          <span className="platform-name" style={{ color: '#1a5c3a' }}>Manual Roster</span>
+        </div>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 60px auto', gap: 8, marginBottom: 8 }}>
+            <input
+              placeholder="Player name"
+              value={manualName}
+              onChange={e => setManualName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddPlayer()}
+              style={{ padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}
+            />
+            <input
+              placeholder="Team"
+              value={manualTeam}
+              onChange={e => setManualTeam(e.target.value)}
+              style={{ padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, textTransform: 'uppercase' }}
+            />
+            <select
+              value={manualPos}
+              onChange={e => setManualPos(e.target.value)}
+              style={{ padding: '8px 6px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, background: 'white' }}
+            >
+              {['C','1B','2B','3B','SS','OF','P','DH'].map(p => <option key={p}>{p}</option>)}
+            </select>
+            <button
+              onClick={handleAddPlayer}
+              style={{ padding: '8px 12px', background: 'var(--green)', color: '#fff', border: 'none', borderRadius: 6, fontFamily: 'Barlow Condensed, sans-serif', fontWeight: 700, fontSize: 14, cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              + Add
+            </button>
+          </div>
+          <div className="field-hint">Use the player's last name exactly as it appears on MLB.com (e.g. "Ohtani", "Judge")</div>
+        </div>
+        {players.filter(p => p.source === 'Manual').length > 0 && (
+          <div>
+            {players.filter(p => p.source === 'Manual').map((p, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <PosBadge pos={p.pos} />
+                  <span style={{ fontWeight: 500 }}>{p.name}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>{p.team}</span>
+                </div>
+                <button
+                  onClick={() => onRemovePlayer(p.name)}
+                  style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 18, cursor: 'pointer', padding: '0 4px' }}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="platform-section">
         <div className="platform-header espn">
           <span className="platform-name">ESPN Fantasy</span>
@@ -271,16 +333,15 @@ function SettingsTab({ prefs, onPrefsChange, notifications }) {
           </select>
         </div>
       </div>
-    </div>
-<div className="settings-section">
+      <div className="settings-section">
         <div className="settings-title">Test</div>
         <div className="setting-row">
           <div>
             <div className="setting-label">Test Notification</div>
-            <div className="setting-desc">Fire a fake alert to test push + MLB.tv</div>
+            <div className="setting-desc">Fire a fake alert to test push and MLB.tv</div>
           </div>
           <button className="connect-btn" onClick={() => {
-            fetch(`${process.env.REACT_APP_API_URL}/api/notify/test`)
+            fetch(process.env.REACT_APP_API_URL + '/api/notify/test')
               .then(r => r.json())
               .then(d => alert(d.success ? 'Notification sent! Check your phone.' : 'Error: ' + d.error))
               .catch(e => alert('Error: ' + e.message));
@@ -288,7 +349,9 @@ function SettingsTab({ prefs, onPrefsChange, notifications }) {
             Test
           </button>
         </div>
-      </div>  );
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -298,12 +361,28 @@ export default function App() {
   const [rosterError, setRosterError] = useState(null);
   const [dismissedAlerts, setDismissedAlerts] = useState(new Set());
   const [prefs, setPrefs] = useState({ autoOpen: false, atBat: true, pitching: true, interval: 30 });
+  const [manualPlayers, setManualPlayers] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ft_manual_players') || '[]'); } catch { return []; }
+  });
   const [platformConfig, setPlatformConfig] = useState(() => {
     try { return JSON.parse(localStorage.getItem('ft_config') || '{}'); } catch { return {}; }
   });
 
+  const handleAddPlayer = (player) => {
+    const updated = [...manualPlayers, player];
+    setManualPlayers(updated);
+    localStorage.setItem('ft_manual_players', JSON.stringify(updated));
+  };
+
+  const handleRemovePlayer = (name) => {
+    const updated = manualPlayers.filter(p => p.name !== name);
+    setManualPlayers(updated);
+    localStorage.setItem('ft_manual_players', JSON.stringify(updated));
+  };
+
   const notifications = useNotifications();
-  const { activePlayers, lastCheck, isPolling, checkNow } = useLiveTracker(players, true);
+  const allPlayers = [...players, ...manualPlayers];
+  const { activePlayers, lastCheck, isPolling, checkNow } = useLiveTracker(allPlayers, true);
 
   const visibleAlerts = activePlayers.filter(a =>
     !dismissedAlerts.has(`${a.player.name}_${a.situation}_${a.inning}`)
@@ -374,9 +453,9 @@ export default function App() {
       </div>
 
       <main className="main">
-        {tab === 'Roster' && <RosterTab players={players} activePlayers={activePlayers} loading={loadingRoster} />}
+        {tab === 'Roster' && <RosterTab players={allPlayers} activePlayers={activePlayers} loading={loadingRoster} />}
         {tab === 'Live' && <LiveTab activePlayers={activePlayers} />}
-        {tab === 'Platforms' && <PlatformsTab config={platformConfig} onSave={handlePlatformSave} />}
+        {tab === 'Platforms' && <PlatformsTab config={platformConfig} onSave={handlePlatformSave} players={allPlayers} onAddPlayer={handleAddPlayer} onRemovePlayer={handleRemovePlayer} />}
         {tab === 'Settings' && <SettingsTab prefs={prefs} onPrefsChange={setPrefs} notifications={notifications} />}
       </main>
     </div>
