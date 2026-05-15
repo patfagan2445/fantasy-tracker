@@ -96,6 +96,6 @@ export const sendSubscription = (subscription) =>
   });
 
 export const openMLBTV = (gamePk) => {
-  const url = `https://www.mlb.com/live-stream-games/${gamePk}`;
+  const url = `https://www.mlb.com/tv/g${gamePk}`;
   window.open(url, '_blank', 'noopener');
 };
