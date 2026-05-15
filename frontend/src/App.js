@@ -272,7 +272,23 @@ function SettingsTab({ prefs, onPrefsChange, notifications }) {
         </div>
       </div>
     </div>
-  );
+<div className="settings-section">
+        <div className="settings-title">Test</div>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">Test Notification</div>
+            <div className="setting-desc">Fire a fake alert to test push + MLB.tv</div>
+          </div>
+          <button className="connect-btn" onClick={() => {
+            fetch(`${process.env.REACT_APP_API_URL}/api/notify/test`)
+              .then(r => r.json())
+              .then(d => alert(d.success ? 'Notification sent! Check your phone.' : 'Error: ' + d.error))
+              .catch(e => alert('Error: ' + e.message));
+          }}>
+            Test
+          </button>
+        </div>
+      </div>  );
 }
 
 export default function App() {
