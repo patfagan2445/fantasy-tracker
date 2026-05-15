@@ -296,7 +296,7 @@ function Toggle({ value, onChange }) {
 }
 
 function SettingsTab({ prefs, onPrefsChange, notifications }) {
-  const { permission, requestPermission } = notifications;
+  const { permission, requestPermission, resubscribe } = notifications;
   return (
     <div>
       <div className="settings-section">
@@ -310,13 +310,15 @@ function SettingsTab({ prefs, onPrefsChange, notifications }) {
             ? <span className="badge-green">✓ Enabled</span>
             : <button className="connect-btn" onClick={requestPermission}>Enable</button>}
         </div>
-        <div className="setting-row">
-          <div>
-            <div className="setting-label">Auto-open MLB.tv</div>
-            <div className="setting-desc">Skip the alert — open the game immediately</div>
+        {permission === 'granted' && (
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">Re-subscribe</div>
+              <div className="setting-desc">Tap to re-register push notifications</div>
+            </div>
+            <button className="connect-btn" onClick={resubscribe}>Re-subscribe</button>
           </div>
-          <Toggle value={prefs.autoOpen} onChange={v => onPrefsChange({ ...prefs, autoOpen: v })} />
-        </div>
+        )}
       </div>
       <div className="settings-section">
         <div className="settings-title">Polling</div>
