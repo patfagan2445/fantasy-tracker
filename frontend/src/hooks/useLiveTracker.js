@@ -66,13 +66,6 @@ export const useNotifications = () => {
   );
   const [subscribed, setSubscribed] = useState(false);
 
-  const requestPermission = async () => {
-    const result = await Notification.requestPermission();
-    setPermission(result);
-    if (result === 'granted') await setupPushSubscription();
-    return result;
-  };
-
   const setupPushSubscription = async () => {
     try {
       if (!('serviceWorker' in navigator)) {
@@ -101,9 +94,16 @@ export const useNotifications = () => {
 
       setSubscribed(true);
     } catch (err) {
-      alert('Push setup failed at: ' + err.message);
+      alert('Push setup failed: ' + err.message);
       console.warn('Push setup failed:', err);
     }
+  };
+
+  const requestPermission = async () => {
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    if (result === 'granted') await setupPushSubscription();
+    return result;
   };
 
   useEffect(() => {
@@ -118,13 +118,12 @@ export const useNotifications = () => {
           });
         })
         .catch(err => {
-          console.warn('SW registration failed:', err);
           alert('Service worker failed to register: ' + err.message);
         });
     }
   }, []);
 
-  return { permission, subscribed, requestPermission };
+  return { permission, subscribed, requestPermission, resubscribe: setupPushSubscription };
 };
 
 function triggerNotification({ player, situation, gamePk, inning, score }) {
