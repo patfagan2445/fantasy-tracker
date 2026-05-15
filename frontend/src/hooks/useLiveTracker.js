@@ -75,29 +75,52 @@ export const useNotifications = () => {
 
   const setupPushSubscription = async () => {
     try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+      if (!('serviceWorker' in navigator)) {
+        alert('Service workers not supported on this browser');
+        return;
+      }
+      if (!('PushManager' in window)) {
+        alert('Push notifications not supported on this browser');
+        return;
+      }
+
       const registration = await navigator.serviceWorker.ready;
+      alert('Step 1 OK: Service worker ready');
+
       const { publicKey } = await getVapidKey();
+      alert('Step 2 OK: Got VAPID key');
+
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey)
       });
+      alert('Step 3 OK: Push subscription created');
+
       await sendSubscription(subscription);
+      alert('Step 4 OK: Subscription saved to backend!');
+
       setSubscribed(true);
     } catch (err) {
-      console.warn('Push setup failed:', err.message);
+      alert('Push setup failed at: ' + err.message);
+      console.warn('Push setup failed:', err);
     }
   };
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/service-worker.js').then(() => {
-        navigator.serviceWorker.addEventListener('message', event => {
-          if (event.data?.type === 'OPEN_GAME') {
-            window.open(event.data.url, '_blank', 'noopener');
-          }
+      navigator.serviceWorker.register('/service-worker.js')
+        .then(reg => {
+          console.log('SW registered:', reg.scope);
+          navigator.serviceWorker.addEventListener('message', event => {
+            if (event.data?.type === 'OPEN_GAME') {
+              window.open(event.data.url, '_blank', 'noopener');
+            }
+          });
+        })
+        .catch(err => {
+          console.warn('SW registration failed:', err);
+          alert('Service worker failed to register: ' + err.message);
         });
-      }).catch(err => console.warn('SW registration failed:', err));
     }
   }, []);
 
