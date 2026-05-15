@@ -107,4 +107,4 @@ router.post('/check-roster', async (req, res) => {
 
     const games = schedResponse.data.dates?.[0]?.games || [];
     const liveGames = games.filter(g => g.status?.abstractGameState === 'Live');
-    console.log('Live games found:', liveGam
+    console.log('Live games found:', liveGames.length);
